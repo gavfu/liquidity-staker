@@ -74,27 +74,6 @@ const config: HardhatUserConfig = {
           viaIR: true,
         },
       },
-      {
-        version: '0.4.18',
-      },
-      {
-        version: '0.5.10',
-      },
-      {
-        version: '0.5.16',
-      },
-      {
-        version: '0.6.6',
-      },
-      {
-        version: '0.5.10',
-        settings: {
-          optimizer: {
-            enabled: true,
-            runs: 99999,
-          },
-        },
-      },
     ],
   },
   abiExporter: {
