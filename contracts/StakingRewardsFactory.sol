@@ -1,7 +1,8 @@
-pragma solidity ^0.5.16;
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
 
-import 'openzeppelin-solidity-2.3.0/contracts/token/ERC20/IERC20.sol';
-import 'openzeppelin-solidity-2.3.0/contracts/ownership/Ownable.sol';
+import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+import "@openzeppelin/contracts/access/Ownable.sol";
 
 import './StakingRewards.sol';
 
@@ -25,7 +26,7 @@ contract StakingRewardsFactory is Ownable {
     constructor(
         address _rewardsToken,
         uint _stakingRewardsGenesis
-    ) Ownable() public {
+    ) Ownable() {
         require(_stakingRewardsGenesis >= block.timestamp, 'StakingRewardsFactory::constructor: genesis too soon');
 
         rewardsToken = _rewardsToken;
