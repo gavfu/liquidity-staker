@@ -120,7 +120,8 @@ contract StakingRewards is IStakingRewards, RewardsDistributionRecipient, Reentr
 
     /* ========== RESTRICTED FUNCTIONS ========== */
 
-    function notifyRewardAmount(uint256 reward) external override onlyRewardsDistribution updateReward(address(0)) {
+    function notifyRewardAmount(uint256 reward, uint256 durationInDays) external override onlyRewardsDistribution updateReward(address(0)) {
+        rewardsDuration = durationInDays.mul(1 days);
         if (block.timestamp >= periodFinish) {
             rewardRate = reward.div(rewardsDuration);
         } else {
@@ -138,7 +139,7 @@ contract StakingRewards is IStakingRewards, RewardsDistributionRecipient, Reentr
 
         lastUpdateTime = block.timestamp;
         periodFinish = block.timestamp.add(rewardsDuration);
-        emit RewardAdded(reward);
+        emit RewardAdded(reward, durationInDays);
     }
 
     /* ========== MODIFIERS ========== */
@@ -155,7 +156,7 @@ contract StakingRewards is IStakingRewards, RewardsDistributionRecipient, Reentr
 
     /* ========== EVENTS ========== */
 
-    event RewardAdded(uint256 reward);
+    event RewardAdded(uint256 reward, uint256 durationInDays);
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, uint256 reward);

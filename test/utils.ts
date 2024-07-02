@@ -1,62 +1,52 @@
-import { BigNumber, providers, utils, Contract } from 'ethers';
+import _ from 'lodash';
+import { expect } from "chai";
+import { ethers } from "hardhat";
+import {
+  StakingRewardsFactory__factory,
+  MockERC20__factory,
+} from "../typechain";
 
-const PERMIT_TYPEHASH = utils.keccak256(
-  utils.toUtf8Bytes('Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)'),
-);
+const { provider } = ethers;
 
-function getDomainSeparator(name: string, tokenAddress: string) {
-  return utils.keccak256(
-    utils.defaultAbiCoder.encode(
-      ['bytes32', 'bytes32', 'bytes32', 'uint256', 'address'],
-      [
-        utils.keccak256(
-          utils.toUtf8Bytes('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'),
-        ),
-        utils.keccak256(utils.toUtf8Bytes(name)),
-        utils.keccak256(utils.toUtf8Bytes('1')),
-        1,
-        tokenAddress,
-      ],
-    ),
-  );
+export const ONE_DAY_IN_SECS = 24n * 60n * 60n;
+
+export const nativeTokenAddress = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+
+
+export async function deployContractsFixture() {
+  const  [Alice, Bob, Caro, Dave]  = await ethers.getSigners();
+
+  const MockERC20 = await ethers.getContractFactory('MockERC20');
+  const rewardTokenContract = await MockERC20.deploy('Mock RWD', 'RWD');
+  const rewardToken = MockERC20__factory.connect(await rewardTokenContract.getAddress(), provider);
+
+  const stakingTokenContract = await MockERC20.deploy('Mock STK', 'STK');
+  const stakingToken = MockERC20__factory.connect(await stakingTokenContract.getAddress(), provider);
+
+  const StakingRewardsFactory = await ethers.getContractFactory('StakingRewardsFactory');
+  const stakingRewardsFactoryContract = await StakingRewardsFactory.deploy(await rewardToken.getAddress());
+  const stakingRewardsFactory = StakingRewardsFactory__factory.connect(await stakingRewardsFactoryContract.getAddress(), provider);
+
+  return { stakingRewardsFactory, stakingToken, rewardToken, Alice, Bob, Caro, Dave };
 }
 
-export async function getApprovalDigest(
-  token: Contract,
-  approve: {
-    owner: string;
-    spender: string;
-    value: BigNumber;
-  },
-  nonce: BigNumber,
-  deadline: BigNumber,
-): Promise<string> {
-  const name = await token.name();
-  const DOMAIN_SEPARATOR = getDomainSeparator(name, token.address);
-  return utils.keccak256(
-    utils.solidityPack(
-      ['bytes1', 'bytes1', 'bytes32', 'bytes32'],
-      [
-        '0x19',
-        '0x01',
-        DOMAIN_SEPARATOR,
-        utils.keccak256(
-          utils.defaultAbiCoder.encode(
-            ['bytes32', 'address', 'address', 'uint256', 'uint256', 'uint256'],
-            [PERMIT_TYPEHASH, approve.owner, approve.spender, approve.value, nonce, deadline],
-          ),
-        ),
-      ],
-    ),
-  );
+export function power(pow: number | bigint) {
+  return 10n ** BigInt(pow);
 }
 
-export const REWARDS_DURATION = 60 * 60 * 24 * 60;
-
-export function expandTo18Decimals(n: number): BigNumber {
-  return BigNumber.from(n).mul(BigNumber.from(10).pow(18));
+export function abs(n: bigint) {
+  return n < 0n ? -n : n;
 }
 
-export async function mineBlock(provider: providers.Web3Provider, timestamp: number): Promise<void> {
-  return provider.send('evm_mine', [timestamp]);
+export function expandTo18Decimals(n: number) {
+  return BigInt(n) * (10n ** 18n);
+}
+
+// ensure result is within .01%
+export function expectBigNumberEquals(expected: bigint, actual: bigint) {
+  const equals = abs(expected - actual) <= abs(expected) / 10000n;
+  if (!equals) {
+    console.log(`BigNumber does not equal. expected: ${expected.toString()}, actual: ${actual.toString()}`);
+  }
+  expect(equals).to.be.true;
 }

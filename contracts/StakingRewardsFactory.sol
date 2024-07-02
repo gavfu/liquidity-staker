@@ -1,78 +1,104 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
-import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 import './StakingRewards.sol';
 
-contract StakingRewardsFactory is Ownable {
+contract StakingRewardsFactory is Ownable, ReentrancyGuard {
+    using SafeMath for uint256;
+    using SafeERC20 for IERC20;
+    using EnumerableSet for EnumerableSet.AddressSet;
+
     // immutables
     address public rewardsToken;
-    uint public stakingRewardsGenesis;
 
     // the staking tokens for which the rewards contract has been deployed
     address[] public stakingTokens;
 
     // info about rewards for a particular staking token
     struct StakingRewardsInfo {
-        address stakingRewards;
-        uint rewardAmount;
+        address poolAddress;
+        uint totalRewardsAmount;
     }
 
     // rewards info by staking token
     mapping(address => StakingRewardsInfo) public stakingRewardsInfoByStakingToken;
 
-    constructor(
-        address _rewardsToken,
-        uint _stakingRewardsGenesis
-    ) Ownable() {
-        require(_stakingRewardsGenesis >= block.timestamp, 'StakingRewardsFactory::constructor: genesis too soon');
+    EnumerableSet.AddressSet private _rewardersSet;
 
+    constructor(
+        address _rewardsToken
+    ) Ownable() {
         rewardsToken = _rewardsToken;
-        stakingRewardsGenesis = _stakingRewardsGenesis;
+        addRewarder(_msgSender());
+    }
+
+    function getStakingPoolAddress(address stakingToken) public virtual view returns (address) {
+        StakingRewardsInfo storage info = stakingRewardsInfoByStakingToken[stakingToken];
+        require(info.poolAddress != address(0), 'StakingRewardsFactory::getStakingPoolAddress: not deployed');
+        return info.poolAddress;
+    }
+
+    /// @dev No guarantees are made on the ordering
+    function getRewarders() public view returns (address[] memory) {
+        return _rewardersSet.values();
     }
 
     ///// permissioned functions
 
     // deploy a staking reward contract for the staking token, and store the reward amount
     // the reward will be distributed to the staking reward contract no sooner than the genesis
-    function deploy(address stakingToken, uint rewardAmount) public onlyOwner {
+    function deploy(address stakingToken) public onlyOwner {
         StakingRewardsInfo storage info = stakingRewardsInfoByStakingToken[stakingToken];
-        require(info.stakingRewards == address(0), 'StakingRewardsFactory::deploy: already deployed');
+        require(info.poolAddress == address(0), 'StakingRewardsFactory::deploy: already deployed');
 
-        info.stakingRewards = address(new StakingRewards(/*_rewardsDistribution=*/ address(this), rewardsToken, stakingToken));
-        info.rewardAmount = rewardAmount;
+        info.poolAddress = address(new StakingRewards(/*_rewardsDistribution=*/ address(this), rewardsToken, stakingToken));
+        info.totalRewardsAmount = 0;
         stakingTokens.push(stakingToken);
+        emit StakingPoolDeployed(info.poolAddress, stakingToken);
     }
 
     ///// permissionless functions
 
-    // call notifyRewardAmount for all staking tokens.
-    function notifyRewardAmounts() public {
-        require(stakingTokens.length > 0, 'StakingRewardsFactory::notifyRewardAmounts: called before any deploys');
-        for (uint i = 0; i < stakingTokens.length; i++) {
-            notifyRewardAmount(stakingTokens[i]);
-        }
-    }
 
-    // notify reward amount for an individual staking token.
-    // this is a fallback in case the notifyRewardAmounts costs too much gas to call for all contracts
-    function notifyRewardAmount(address stakingToken) public {
-        require(block.timestamp >= stakingRewardsGenesis, 'StakingRewardsFactory::notifyRewardAmount: not ready');
-
+    function addRewards(address stakingToken, uint256 rewardsAmount, uint256 roundDurationInDays) public onlyRewarder {
         StakingRewardsInfo storage info = stakingRewardsInfoByStakingToken[stakingToken];
-        require(info.stakingRewards != address(0), 'StakingRewardsFactory::notifyRewardAmount: not deployed');
+        require(info.poolAddress != address(0), 'StakingRewardsFactory::addRewards: not deployed');
+        require(roundDurationInDays > 0, 'StakingRewardsFactory::addRewards: duration too short');
 
-        if (info.rewardAmount > 0) {
-            uint rewardAmount = info.rewardAmount;
-            info.rewardAmount = 0;
+        if (rewardsAmount > 0) {
+            info.totalRewardsAmount = info.totalRewardsAmount.add(rewardsAmount);
 
-            require(
-                IERC20(rewardsToken).transfer(info.stakingRewards, rewardAmount),
-                'StakingRewardsFactory::notifyRewardAmount: transfer failed'
-            );
-            StakingRewards(info.stakingRewards).notifyRewardAmount(rewardAmount);
+            IERC20(rewardsToken).safeTransferFrom(msg.sender, info.poolAddress, rewardsAmount);
+            StakingRewards(info.poolAddress).notifyRewardAmount(rewardsAmount, roundDurationInDays);
         }
     }
+
+    function addRewarder(address rewarder) public nonReentrant onlyOwner {
+        require(rewarder != address(0), "Zero address detected");
+        require(!_rewardersSet.contains(rewarder), "Already added");
+
+        _rewardersSet.add(rewarder);
+        emit RewarderAdded(rewarder);
+    }
+
+    function removeRewarder(address rewarder) public nonReentrant onlyOwner {
+        require(_rewardersSet.contains(rewarder), "Not a rewarder");
+        require(_rewardersSet.remove(rewarder), "Failed to remove rewarder");
+        emit RewarderRemoved(rewarder);
+    }
+
+    modifier onlyRewarder() {
+        require(_rewardersSet.contains(_msgSender()), "Not a rewarder");
+        _;
+    }
+
+    event StakingPoolDeployed(address indexed poolAddress, address indexed stakingToken);
+    event RewarderAdded(address indexed rewarder);
+    event RewarderRemoved(address indexed rewarder);
 }
