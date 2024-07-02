@@ -2,7 +2,7 @@ import _ from 'lodash';
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
-  StakingRewardsFactory__factory,
+  StakingPoolFactory__factory,
   MockERC20__factory,
 } from "../typechain";
 
@@ -23,9 +23,9 @@ export async function deployContractsFixture() {
   const stakingTokenContract = await MockERC20.deploy('Mock STK', 'STK');
   const stakingToken = MockERC20__factory.connect(await stakingTokenContract.getAddress(), provider);
 
-  const StakingRewardsFactory = await ethers.getContractFactory('StakingRewardsFactory');
-  const stakingRewardsFactoryContract = await StakingRewardsFactory.deploy(await rewardToken.getAddress());
-  const stakingRewardsFactory = StakingRewardsFactory__factory.connect(await stakingRewardsFactoryContract.getAddress(), provider);
+  const StakingPoolFactory = await ethers.getContractFactory('StakingPoolFactory');
+  const stakingRewardsFactoryContract = await StakingPoolFactory.deploy(await rewardToken.getAddress());
+  const stakingRewardsFactory = StakingPoolFactory__factory.connect(await stakingRewardsFactoryContract.getAddress(), provider);
 
   return { stakingRewardsFactory, stakingToken, rewardToken, Alice, Bob, Caro, Dave };
 }

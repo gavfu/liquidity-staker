@@ -6,13 +6,12 @@ import { loadFixture } from '@nomicfoundation/hardhat-network-helpers';
 import { anyValue } from '@nomicfoundation/hardhat-chai-matchers/withArgs';
 import { ONE_DAY_IN_SECS, deployContractsFixture, expandTo18Decimals, expectBigNumberEquals } from './utils';
 import {
-  StakingRewards__factory,
-  StakingRewardsFactory__factory,
+  StakingPool__factory,
 } from "../typechain";
 
 const { provider } = ethers;
 
-describe('StakingRewards Pool', () => {
+describe('StakingPool Pool', () => {
 
   it('Basic scenario works', async () => {
 
@@ -20,7 +19,7 @@ describe('StakingRewards Pool', () => {
 
     // Deploy a farm
     await expect(stakingRewardsFactory.connect(Alice).deploy(await stakingToken.getAddress())).not.to.be.reverted;
-    const erc20Farm = StakingRewards__factory.connect(await stakingRewardsFactory.getStakingPoolAddress(await stakingToken.getAddress()), provider);
+    const erc20Farm = StakingPool__factory.connect(await stakingRewardsFactory.getStakingPoolAddress(await stakingToken.getAddress()), provider);
 
     // But user should be able to stake now (without rewards)
     await expect(stakingToken.connect(Alice).mint(Bob.address, expandTo18Decimals(10_000))).not.to.be.reverted;
@@ -172,7 +171,7 @@ describe('StakingRewards Pool', () => {
     const rewardStartTime = BigInt(await time.latest()) + ONE_DAY_IN_SECS;
     const rewardDurationInDays = 7n;
     await expect(stakingRewardsFactory.connect(Alice).deploy(await stakingToken.getAddress())).not.to.be.reverted;
-    const erc20Farm = StakingRewards__factory.connect(await stakingRewardsFactory.getStakingPoolAddress(await stakingToken.getAddress()), provider);
+    const erc20Farm = StakingPool__factory.connect(await stakingRewardsFactory.getStakingPoolAddress(await stakingToken.getAddress()), provider);
   
     await expect(stakingToken.connect(Alice).mint(Bob.address, expandTo18Decimals(10_000))).not.to.be.reverted;
     await expect(stakingToken.connect(Alice).mint(Caro.address, expandTo18Decimals(10_000))).not.to.be.reverted;
@@ -228,7 +227,7 @@ describe('StakingRewards Pool', () => {
     const rewardStartTime = BigInt(await time.latest()) + ONE_DAY_IN_SECS;
     const rewardDurationInDays = 1n;
     await expect(stakingRewardsFactory.connect(Alice).deploy(await stakingToken.getAddress())).not.to.be.reverted;
-    const erc20Farm = StakingRewards__factory.connect(await stakingRewardsFactory.getStakingPoolAddress(await stakingToken.getAddress()), provider);
+    const erc20Farm = StakingPool__factory.connect(await stakingRewardsFactory.getStakingPoolAddress(await stakingToken.getAddress()), provider);
   
     await expect(stakingToken.connect(Alice).mint(Bob.address, expandTo18Decimals(10_000))).not.to.be.reverted;
     await expect(stakingToken.connect(Alice).mint(Caro.address, expandTo18Decimals(10_000))).not.to.be.reverted;
@@ -285,7 +284,7 @@ describe('StakingRewards Pool', () => {
     const { rewardToken, stakingRewardsFactory, stakingToken, Alice, Bob, Caro } = await loadFixture(deployContractsFixture);
 
     await expect(stakingRewardsFactory.connect(Alice).deploy(await stakingToken.getAddress())).not.to.be.reverted;
-    const erc20Farm = StakingRewards__factory.connect(await stakingRewardsFactory.getStakingPoolAddress(await stakingToken.getAddress()), provider);
+    const erc20Farm = StakingPool__factory.connect(await stakingRewardsFactory.getStakingPoolAddress(await stakingToken.getAddress()), provider);
   
     await expect(stakingToken.connect(Alice).mint(Bob.address, expandTo18Decimals(10_000))).not.to.be.reverted;
     await expect(stakingToken.connect(Alice).mint(Caro.address, expandTo18Decimals(10_000))).not.to.be.reverted;
@@ -348,7 +347,7 @@ describe('StakingRewards Pool', () => {
 
     await expect(stakingRewardsFactory.connect(Alice).deploy(await stakingToken.getAddress()))
       .to.be.rejectedWith(
-        /StakingRewardsFactory::deploy: already deployed/,
+        /StakingPoolFactory::deploy: already deployed/,
       );
 
   });
@@ -384,7 +383,7 @@ describe('StakingRewards Pool', () => {
     // Bob should be able to call admin functions
     await expect(stakingRewardsFactory.connect(Bob).deploy(await stakingToken.getAddress()))
       .to.emit(stakingRewardsFactory, 'StakingPoolDeployed').withArgs(anyValue, await stakingToken.getAddress());
-    const erc20Farm = StakingRewards__factory.connect(await stakingRewardsFactory.getStakingPoolAddress(await stakingToken.getAddress()), provider);
+    const erc20Farm = StakingPool__factory.connect(await stakingRewardsFactory.getStakingPoolAddress(await stakingToken.getAddress()), provider);
 
     const totalReward = expandTo18Decimals(1_000_000);
     await expect(rewardToken.connect(Alice).mint(Alice.address, totalReward)).not.to.be.reverted;

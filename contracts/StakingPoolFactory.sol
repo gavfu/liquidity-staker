@@ -7,9 +7,9 @@ import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
-import './StakingRewards.sol';
+import './StakingPool.sol';
 
-contract StakingRewardsFactory is Ownable, ReentrancyGuard {
+contract StakingPoolFactory is Ownable, ReentrancyGuard {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -40,7 +40,7 @@ contract StakingRewardsFactory is Ownable, ReentrancyGuard {
 
     function getStakingPoolAddress(address stakingToken) public virtual view returns (address) {
         StakingRewardsInfo storage info = stakingRewardsInfoByStakingToken[stakingToken];
-        require(info.poolAddress != address(0), 'StakingRewardsFactory::getStakingPoolAddress: not deployed');
+        require(info.poolAddress != address(0), 'StakingPoolFactory::getStakingPoolAddress: not deployed');
         return info.poolAddress;
     }
 
@@ -55,9 +55,9 @@ contract StakingRewardsFactory is Ownable, ReentrancyGuard {
     // the reward will be distributed to the staking reward contract no sooner than the genesis
     function deploy(address stakingToken) public onlyOwner {
         StakingRewardsInfo storage info = stakingRewardsInfoByStakingToken[stakingToken];
-        require(info.poolAddress == address(0), 'StakingRewardsFactory::deploy: already deployed');
+        require(info.poolAddress == address(0), 'StakingPoolFactory::deploy: already deployed');
 
-        info.poolAddress = address(new StakingRewards(/*_rewardsDistribution=*/ address(this), rewardsToken, stakingToken));
+        info.poolAddress = address(new StakingPool(/*_rewardsDistribution=*/ address(this), rewardsToken, stakingToken));
         info.totalRewardsAmount = 0;
         stakingTokens.push(stakingToken);
         emit StakingPoolDeployed(info.poolAddress, stakingToken);
@@ -68,14 +68,14 @@ contract StakingRewardsFactory is Ownable, ReentrancyGuard {
 
     function addRewards(address stakingToken, uint256 rewardsAmount, uint256 roundDurationInDays) public onlyRewarder {
         StakingRewardsInfo storage info = stakingRewardsInfoByStakingToken[stakingToken];
-        require(info.poolAddress != address(0), 'StakingRewardsFactory::addRewards: not deployed');
-        require(roundDurationInDays > 0, 'StakingRewardsFactory::addRewards: duration too short');
+        require(info.poolAddress != address(0), 'StakingPoolFactory::addRewards: not deployed');
+        require(roundDurationInDays > 0, 'StakingPoolFactory::addRewards: duration too short');
 
         if (rewardsAmount > 0) {
             info.totalRewardsAmount = info.totalRewardsAmount.add(rewardsAmount);
 
             IERC20(rewardsToken).safeTransferFrom(msg.sender, info.poolAddress, rewardsAmount);
-            StakingRewards(info.poolAddress).notifyRewardAmount(rewardsAmount, roundDurationInDays);
+            StakingPool(info.poolAddress).notifyRewardAmount(rewardsAmount, roundDurationInDays);
         }
     }
 
