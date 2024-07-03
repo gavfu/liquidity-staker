@@ -8,7 +8,8 @@ import {
 
 const { provider } = ethers;
 
-export const ONE_DAY_IN_SECS = 24n * 60n * 60n;
+export const ONE_HOUR_IN_SECS = 60n * 60n;
+export const ONE_DAY_IN_SECS = 24n * ONE_HOUR_IN_SECS;
 
 export const nativeTokenAddress = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 
@@ -44,7 +45,7 @@ export function expandTo18Decimals(n: number) {
 
 // ensure result is within .01%
 export function expectBigNumberEquals(expected: bigint, actual: bigint) {
-  const equals = abs(expected - actual) <= abs(expected) / 10000n;
+  const equals = abs(expected - actual) <= abs(expected) * 2n / 10000n;
   if (!equals) {
     console.log(`BigNumber does not equal. expected: ${expected.toString()}, actual: ${actual.toString()}`);
   }

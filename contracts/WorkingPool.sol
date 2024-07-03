@@ -4,164 +4,179 @@ pragma solidity ^0.8.18;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 contract WorkingPool is Ownable, ReentrancyGuard {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
+    using EnumerableSet for EnumerableSet.AddressSet;
 
     /* ========== STATE VARIABLES ========== */
 
+    EnumerableSet.AddressSet internal workers;
+    mapping(address => uint256) public workerRewardsPendingClaim;
+
     IERC20 public rewardsToken;
-    IERC20 public stakingToken;
-    uint256 public periodFinish = 0;
-    uint256 public rewardRate = 0;
-    uint256 public rewardsDuration = 60 days;
-    uint256 public lastUpdateTime;
-    uint256 public rewardPerTokenStored;
+    uint256 public totalRewards;
+    uint256 public totalRewardsPerSec;
+    uint256 public undistributedRewards;
 
-    mapping(address => uint256) public userRewardPerTokenPaid;
-    mapping(address => uint256) public rewards;
+    uint256 public totalRewardsPerWorkerSettled;
+    mapping(address => uint256) public rewardsPerWorkerSettled;
 
-    uint256 private _totalSupply;
-    mapping(address => uint256) private _balances;
+    uint256 public rewardsDuration;
+    uint256 public maxReportSpan;
+    uint256 public periodFinish;
+    uint256 public lastSettleTime;
+
+    mapping(address => uint256) public lastWorkReportTime;
+
+    bool public initialized;
+    bool public started;
 
     /* ========== CONSTRUCTOR ========== */
 
-    constructor(
-        address _rewardsToken,
-        address _stakingToken
-    ) Ownable() {
+    constructor(address _rewardsToken) Ownable() {
+        require(_rewardsToken != address(0), "zero address detected");
         rewardsToken = IERC20(_rewardsToken);
-        stakingToken = IERC20(_stakingToken);
+    }
+
+    function initialize(uint256 _totalRewards, uint256 _rewardsDuration, uint256 _maxReportSpan) external nonReentrant onlyOwner {
+        require(!initialized, "already initialized");
+
+        require(_totalRewards > 0, "too few rewards");
+        require(_rewardsDuration > 0, "too short rewards duration");
+        require(_maxReportSpan > 0, "too short report span");
+        totalRewards = _totalRewards;
+        rewardsDuration = _rewardsDuration;
+        maxReportSpan = _maxReportSpan;
+        
+        rewardsToken.safeTransferFrom(msg.sender, address(this), totalRewards);
+
+        initialized = true;
+        emit Initialized(totalRewards, rewardsDuration, maxReportSpan);
     }
 
     /* ========== VIEWS ========== */
 
-    function totalSupply() external view returns (uint256) {
-        return _totalSupply;
+    function totalWorkers() public view returns (uint256) {
+        return workers.length();
     }
 
-    function balanceOf(address account) external view returns (uint256) {
-        return _balances[account];
-    }
-
-    function lastTimeRewardApplicable() public view returns (uint256) {
+    function settleTimeApplicable() public view returns (uint256) {
         return Math.min(block.timestamp, periodFinish);
     }
 
-    function rewardPerToken() public view returns (uint256) {
-        if (_totalSupply == 0) {
-            return rewardPerTokenStored;
+    function totalRewardsPerWorkerTillNow() public view returns (uint256) {
+        if (totalWorkers() == 0) {
+            return totalRewardsPerWorkerSettled;
         }
         return
-            rewardPerTokenStored.add(
-                lastTimeRewardApplicable().sub(lastUpdateTime).mul(rewardRate).mul(1e18).div(_totalSupply)
+            totalRewardsPerWorkerSettled.add(
+                settleTimeApplicable().sub(lastSettleTime).mul(totalRewardsPerSec).mul(1e18).div(totalWorkers()).div(1e18)
             );
     }
 
-    function earned(address account) public view returns (uint256) {
-        return _balances[account].mul(rewardPerToken().sub(userRewardPerTokenPaid[account])).div(1e18).add(rewards[account]);
+    function workerRewardsPendingSettle(address worker) public view returns (uint256) {
+        return totalRewardsPerWorkerTillNow().sub(rewardsPerWorkerSettled[worker]);
     }
 
-    function getRewardForDuration() external view returns (uint256) {
-        return rewardRate.mul(rewardsDuration);
+    function earned(address worker) public view returns (uint256) {
+        return workerRewardsPendingClaim[worker];
     }
 
     /* ========== MUTATIVE FUNCTIONS ========== */
 
-    function stakeWithPermit(uint256 amount, uint deadline, uint8 v, bytes32 r, bytes32 s) external nonReentrant updateReward(msg.sender) {
-        require(amount > 0, "Cannot stake 0");
-        _totalSupply = _totalSupply.add(amount);
-        _balances[msg.sender] = _balances[msg.sender].add(amount);
+    function register() external nonReentrant onlyInitialized settleRewards(msg.sender) {
+        require(!workers.contains(msg.sender), "already registered");
 
-        // permit
-        IUniswapV2ERC20(address(stakingToken)).permit(msg.sender, address(this), amount, deadline, v, r, s);
+        bool firstWorker = workers.length() == 0;
+        if (!started && firstWorker) {
+            started = true;
+            totalRewardsPerSec = totalRewards.div(rewardsDuration);
+            lastSettleTime = block.timestamp;
+            periodFinish = block.timestamp.add(rewardsDuration);
+        }
 
-        stakingToken.safeTransferFrom(msg.sender, address(this), amount);
-        emit Staked(msg.sender, amount);
+        workers.add(msg.sender);
+        lastWorkReportTime[msg.sender] = block.timestamp;
+
+        emit WorkerRegistered(msg.sender);
     }
 
-    function stake(uint256 amount) external nonReentrant updateReward(msg.sender) {
-        require(amount > 0, "Cannot stake 0");
-        _totalSupply = _totalSupply.add(amount);
-        _balances[msg.sender] = _balances[msg.sender].add(amount);
-        stakingToken.safeTransferFrom(msg.sender, address(this), amount);
-        emit Staked(msg.sender, amount);
+    function exit() external nonReentrant onlyInitialized settleRewards(address(0)) {
+        require(workers.contains(msg.sender), "unregistered worker");
+        workers.remove(msg.sender);
+
+        emit WorkerExited(msg.sender);
     }
 
-    function withdraw(uint256 amount) public nonReentrant updateReward(msg.sender) {
-        require(amount > 0, "Cannot withdraw 0");
-        _totalSupply = _totalSupply.sub(amount);
-        _balances[msg.sender] = _balances[msg.sender].sub(amount);
-        stakingToken.safeTransfer(msg.sender, amount);
-        emit Withdrawn(msg.sender, amount);
-    }
-
-    function getReward() public nonReentrant updateReward(msg.sender) {
-        uint256 reward = rewards[msg.sender];
-        if (reward > 0) {
-            rewards[msg.sender] = 0;
-            rewardsToken.safeTransfer(msg.sender, reward);
-            emit RewardPaid(msg.sender, reward);
+    function claimRewards() external nonReentrant onlyInitialized settleRewards(msg.sender) {
+        require(workers.contains(msg.sender), "unregistered worker");
+        uint256 rewards = workerRewardsPendingClaim[msg.sender];
+        if (rewards > 0) {
+            workerRewardsPendingClaim[msg.sender] = 0;
+            rewardsToken.safeTransfer(msg.sender, rewards);
+            emit RewardsClaimed(msg.sender, rewards);
         }
     }
 
-    function exit() external {
-        withdraw(_balances[msg.sender]);
-        getReward();
-    }
+    function submitWorkReport(bool mockValid) external nonReentrant onlyInitialized {
+        require(workers.contains(msg.sender), "unregistered worker");
+        bool inReportWindow = block.timestamp.sub(lastWorkReportTime[msg.sender]) <= maxReportSpan;
+        if (!mockValid) {
+            emit WorkReportSubmitted(msg.sender, false, inReportWindow);
+            return;
+        }
 
-    /* ========== RESTRICTED FUNCTIONS ========== */
-
-    function addRewards(uint256 rewardsAmount, uint256 durationInDays) external updateReward(address(0)) onlyOwner {
-        require(rewardsAmount > 0, "Too small rewards amount");
-
-        rewardsToken.safeTransferFrom(msg.sender, address(this), rewardsAmount);
-
-        rewardsDuration = durationInDays.mul(1 days);
-        if (block.timestamp >= periodFinish) {
-            rewardRate = rewardsAmount.div(rewardsDuration);
+        totalRewardsPerWorkerSettled = totalRewardsPerWorkerTillNow();
+        lastSettleTime = settleTimeApplicable();
+        if (inReportWindow) {
+            workerRewardsPendingClaim[msg.sender] += workerRewardsPendingSettle(msg.sender);
         } else {
-            uint256 remaining = periodFinish.sub(block.timestamp);
-            uint256 leftover = remaining.mul(rewardRate);
-            rewardRate = rewardsAmount.add(leftover).div(rewardsDuration);
+            undistributedRewards += workerRewardsPendingSettle(msg.sender);
         }
+        rewardsPerWorkerSettled[msg.sender] = totalRewardsPerWorkerSettled;
 
-        // Ensure the provided reward amount is not more than the balance in the contract.
-        // This keeps the reward rate in the right range, preventing overflows due to
-        // very high values of rewardRate in the earned and rewardsPerToken functions;
-        // Reward + leftover must be less than 2^256 / 10^18 to avoid overflow.
-        uint balance = rewardsToken.balanceOf(address(this));
-        require(rewardRate <= balance.div(rewardsDuration), "Provided reward too high");
-
-        lastUpdateTime = block.timestamp;
-        periodFinish = block.timestamp.add(rewardsDuration);
-
-        emit RewardAdded(rewardsAmount, durationInDays);
+        lastWorkReportTime[msg.sender] = block.timestamp;
+        emit WorkReportSubmitted(msg.sender, mockValid, inReportWindow);
     }
 
+    function settlePool(address toAddress) external nonReentrant onlyInitialized {
+        require(toAddress != address(0), "zero address detected");
+        require(periodFinish > 0 && block.timestamp > periodFinish, "not finished yet");
+        if (undistributedRewards > 0) {
+            rewardsToken.safeTransfer(toAddress, undistributedRewards);
+            undistributedRewards = 0;
+        }
+        emit PoolSettled(toAddress, undistributedRewards);
+    }
+    
     /* ========== MODIFIERS ========== */
 
-    modifier updateReward(address account) {
-        rewardPerTokenStored = rewardPerToken();
-        lastUpdateTime = lastTimeRewardApplicable();
-        if (account != address(0)) {
-            rewards[account] = earned(account);
-            userRewardPerTokenPaid[account] = rewardPerTokenStored;
+    modifier onlyInitialized() {
+        require(initialized, "not initialized");
+        _;
+    }
+
+    modifier settleRewards(address worker) {
+        totalRewardsPerWorkerSettled = totalRewardsPerWorkerTillNow();
+        lastSettleTime = settleTimeApplicable();
+        if (worker != address(0)) {
+            // Pending Settle & Pending Claim ===> Settled & Pending Claim
+            workerRewardsPendingClaim[worker] += workerRewardsPendingSettle(worker);
+            rewardsPerWorkerSettled[worker] = totalRewardsPerWorkerSettled;
         }
         _;
     }
 
     /* ========== EVENTS ========== */
-
-    event RewardAdded(uint256 reward, uint256 durationInDays);
-    event Staked(address indexed user, uint256 amount);
-    event Withdrawn(address indexed user, uint256 amount);
-    event RewardPaid(address indexed user, uint256 reward);
-}
-
-interface IUniswapV2ERC20 {
-    function permit(address owner, address spender, uint value, uint deadline, uint8 v, bytes32 r, bytes32 s) external;
+    event Initialized(uint256 totalRewards, uint256 rewardsDuration, uint256 maxReportSpan);
+    event WorkerRegistered(address indexed worker);
+    event WorkerExited(address indexed worker);
+    event RewardsClaimed(address indexed user, uint256 rewards);
+    event WorkReportSubmitted(address indexed worker, bool valid, bool inReportWindow);
+    event PoolSettled(address indexed toAddress, uint256 rewards);
 }
