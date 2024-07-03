@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
+// import "hardhat/console.sol";
+
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
@@ -16,15 +18,15 @@ contract WorkingPool is Ownable, ReentrancyGuard {
     /* ========== STATE VARIABLES ========== */
 
     EnumerableSet.AddressSet internal workers;
-    mapping(address => uint256) public workerRewardsPendingClaim;
+    mapping(address => uint256) public totalRewardsSettledAndUnclaimedForWorkers;
 
     IERC20 public rewardsToken;
     uint256 public totalRewards;
     uint256 public totalRewardsPerSec;
     uint256 public undistributedRewards;
 
-    uint256 public totalRewardsPerWorkerSettled;
-    mapping(address => uint256) public rewardsPerWorkerSettled;
+    uint256 public perSecPerWorkerTotalRewardsSettled;
+    mapping(address => uint256) public perSecTotalRewardsSettledForWorkers;
 
     uint256 public rewardsDuration;
     uint256 public maxReportSpan;
@@ -69,22 +71,22 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         return Math.min(block.timestamp, periodFinish);
     }
 
-    function totalRewardsPerWorkerTillNow() public view returns (uint256) {
+    function perSecPerWorkerTotalRewardsTillNow() public view returns (uint256) {
         if (totalWorkers() == 0) {
-            return totalRewardsPerWorkerSettled;
+            return perSecPerWorkerTotalRewardsSettled;
         }
         return
-            totalRewardsPerWorkerSettled.add(
+            perSecPerWorkerTotalRewardsSettled.add(
                 settleTimeApplicable().sub(lastSettleTime).mul(totalRewardsPerSec).mul(1e18).div(totalWorkers()).div(1e18)
             );
     }
 
-    function workerRewardsPendingSettle(address worker) public view returns (uint256) {
-        return totalRewardsPerWorkerTillNow().sub(rewardsPerWorkerSettled[worker]);
+    function perSecTotalRewardsPendingSettleForWorker(address worker) public view returns (uint256) {
+        return perSecPerWorkerTotalRewardsTillNow().sub(perSecTotalRewardsSettledForWorkers[worker]);
     }
 
     function earned(address worker) public view returns (uint256) {
-        return workerRewardsPendingClaim[worker];
+        return totalRewardsSettledAndUnclaimedForWorkers[worker];
     }
 
     /* ========== MUTATIVE FUNCTIONS ========== */
@@ -115,9 +117,9 @@ contract WorkingPool is Ownable, ReentrancyGuard {
 
     function claimRewards() external nonReentrant onlyInitialized settleRewards(msg.sender) {
         require(workers.contains(msg.sender), "unregistered worker");
-        uint256 rewards = workerRewardsPendingClaim[msg.sender];
+        uint256 rewards = totalRewardsSettledAndUnclaimedForWorkers[msg.sender];
         if (rewards > 0) {
-            workerRewardsPendingClaim[msg.sender] = 0;
+            totalRewardsSettledAndUnclaimedForWorkers[msg.sender] = 0;
             rewardsToken.safeTransfer(msg.sender, rewards);
             emit RewardsClaimed(msg.sender, rewards);
         }
@@ -131,14 +133,14 @@ contract WorkingPool is Ownable, ReentrancyGuard {
             return;
         }
 
-        totalRewardsPerWorkerSettled = totalRewardsPerWorkerTillNow();
+        perSecPerWorkerTotalRewardsSettled = perSecPerWorkerTotalRewardsTillNow();
         lastSettleTime = settleTimeApplicable();
         if (inReportWindow) {
-            workerRewardsPendingClaim[msg.sender] += workerRewardsPendingSettle(msg.sender);
+            totalRewardsSettledAndUnclaimedForWorkers[msg.sender] += perSecTotalRewardsPendingSettleForWorker(msg.sender);
         } else {
-            undistributedRewards += workerRewardsPendingSettle(msg.sender);
+            undistributedRewards += perSecTotalRewardsPendingSettleForWorker(msg.sender);
         }
-        rewardsPerWorkerSettled[msg.sender] = totalRewardsPerWorkerSettled;
+        perSecTotalRewardsSettledForWorkers[msg.sender] = perSecPerWorkerTotalRewardsSettled;
 
         lastWorkReportTime[msg.sender] = block.timestamp;
         emit WorkReportSubmitted(msg.sender, mockValid, inReportWindow);
@@ -162,12 +164,18 @@ contract WorkingPool is Ownable, ReentrancyGuard {
     }
 
     modifier settleRewards(address worker) {
-        totalRewardsPerWorkerSettled = totalRewardsPerWorkerTillNow();
+        perSecPerWorkerTotalRewardsSettled = perSecPerWorkerTotalRewardsTillNow();
         lastSettleTime = settleTimeApplicable();
         if (worker != address(0)) {
-            // Pending Settle & Pending Claim ===> Settled & Pending Claim
-            workerRewardsPendingClaim[worker] += workerRewardsPendingSettle(worker);
-            rewardsPerWorkerSettled[worker] = totalRewardsPerWorkerSettled;
+            bool newWorker = !workers.contains(msg.sender);
+            if (newWorker) {
+                totalRewardsSettledAndUnclaimedForWorkers[worker] = 0;
+            }
+            else {
+                // Pending Settle & Pending Claim ===> Settled & Pending Claim
+                totalRewardsSettledAndUnclaimedForWorkers[worker] += perSecTotalRewardsPendingSettleForWorker(worker);
+            }
+            perSecTotalRewardsSettledForWorkers[worker] = perSecPerWorkerTotalRewardsSettled;
         }
         _;
     }
