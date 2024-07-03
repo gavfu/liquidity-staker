@@ -111,7 +111,9 @@ contract WorkingPool is Ownable, ReentrancyGuard {
 
     function exit() external nonReentrant onlyInitialized {
         require(workers.contains(msg.sender), "unregistered worker");
-        _doSettleRewards(address(0), false, false);
+
+        undistributedRewards += perSecTotalRewardsPendingSettleForWorker(msg.sender);
+        _doSettleRewards(msg.sender, false, false);
 
         workers.remove(msg.sender);
         emit WorkerExited(msg.sender);
@@ -141,8 +143,6 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         }
         _doSettleRewards(msg.sender, false, inReportWindow);
 
-        
-
         lastWorkReportTime[msg.sender] = block.timestamp;
         emit WorkReportSubmitted(msg.sender, mockValid, inReportWindow);
     }
@@ -150,11 +150,12 @@ contract WorkingPool is Ownable, ReentrancyGuard {
     function settlePool(address toAddress) external nonReentrant onlyInitialized {
         require(toAddress != address(0), "zero address detected");
         require(periodFinish > 0 && block.timestamp > periodFinish, "not finished yet");
+        
+        emit PoolSettled(toAddress, undistributedRewards);
         if (undistributedRewards > 0) {
             rewardsToken.safeTransfer(toAddress, undistributedRewards);
             undistributedRewards = 0;
         }
-        emit PoolSettled(toAddress, undistributedRewards);
     }
     
     /* ========== MODIFIERS ========== */
@@ -165,18 +166,18 @@ contract WorkingPool is Ownable, ReentrancyGuard {
     }
 
     function _doSettleRewards(address worker, bool newWorker, bool settleNewRewards) internal {
+        require(worker != address(0), "zero address detected");
+
         perSecPerWorkerTotalRewardsSettled = perSecPerWorkerTotalRewardsTillNow();
         lastSettleTime = settleTimeApplicable();
-        if (worker != address(0)) {
-            if (newWorker) {
-                totalRewardsSettledAndUnclaimedForWorkers[worker] = 0;
-            }
-            else if (settleNewRewards) {
-                // Pending Settle & Pending Claim ===> Settled & Pending Claim
-                totalRewardsSettledAndUnclaimedForWorkers[worker] += perSecTotalRewardsPendingSettleForWorker(worker);
-            }
-            perSecTotalRewardsSettledForWorkers[worker] = perSecPerWorkerTotalRewardsSettled;
+        if (newWorker) {
+            totalRewardsSettledAndUnclaimedForWorkers[worker] = 0;
         }
+        else if (settleNewRewards) {
+            // Pending Settle & Pending Claim ===> Settled & Pending Claim
+            totalRewardsSettledAndUnclaimedForWorkers[worker] += perSecTotalRewardsPendingSettleForWorker(worker);
+        }
+        perSecTotalRewardsSettledForWorkers[worker] = perSecPerWorkerTotalRewardsSettled;
     }
 
     /* ========== EVENTS ========== */

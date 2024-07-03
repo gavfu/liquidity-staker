@@ -126,8 +126,57 @@ describe('Working Pool', () => {
     await expect(tx).to.changeTokenBalances(rewardToken, [Alice, await pool.getAddress()], [aliceExactRewards, -aliceExactRewards]);
     expect(await pool.earned(Alice.address)).to.equal(0);
 
-  
+    // 1 hour later (within), Bob and Caro submit valid reports, and share the rewards
+    expectBigNumberEquals(await pool.earned(Bob.address), totalRewardsPerHour / 2n + totalRewardsPerHour / 3n);
+    expectBigNumberEquals(await pool.earned(Caro.address), totalRewardsPerHour / 3n);
+    await time.increaseTo(lastTime + ONE_HOUR_IN_SECS * 2n - 1n);
+    await expect(pool.connect(Alice).submitWorkReport(true)).to.be.revertedWith('unregistered worker');
+    await expect(pool.connect(Bob).submitWorkReport(true))
+      .to.emit(pool, 'WorkReportSubmitted').withArgs(Bob.address, true, true);
+    await expect(pool.connect(Caro).submitWorkReport(true))
+      .to.emit(pool, 'WorkReportSubmitted').withArgs(Caro.address, true, true);
+    expectBigNumberEquals(await pool.earned(Bob.address), totalRewardsPerHour / 2n + totalRewardsPerHour / 3n + totalRewardsPerHour / 2n);
+    expectBigNumberEquals(await pool.earned(Caro.address), totalRewardsPerHour / 3n + totalRewardsPerHour / 2n);
 
+    // 1 hour later (within), Bob leaves the pool, and Caro submits a valid report.
+    let undistributedRewards = await pool.undistributedRewards();
+    await time.increaseTo(lastTime + ONE_HOUR_IN_SECS * 3n - 1n);
+    await expect(pool.connect(Bob).exit())
+      .to.emit(pool, 'WorkerExited').withArgs(Bob.address);
+    await expect(pool.connect(Caro).submitWorkReport(true))
+      .to.emit(pool, 'WorkReportSubmitted').withArgs(Caro.address, true, true);
+    expectBigNumberEquals(await pool.earned(Caro.address), totalRewardsPerHour / 3n + totalRewardsPerHour / 2n + totalRewardsPerHour / 2n);
+    expectBigNumberEquals(await pool.undistributedRewards(), undistributedRewards + totalRewardsPerHour / 2n);
+
+    let exactRewardsOfCaro = await pool.earned(Caro.address);
+    undistributedRewards = await pool.undistributedRewards();
+  
+    // Fast forward to the end
+    await time.increaseTo(await pool.periodFinish() + 1n);
+    // Caro's total rewards should remain unchanged, since she does not submit valid report
+    expectBigNumberEquals(await pool.earned(Caro.address), exactRewardsOfCaro);
+
+    // Now if somebody settles the pool, he get the undistributed rewards
+    tx = pool.connect(Dave).settlePool(Dave.address);
+    await expect(tx).to.emit(pool, 'PoolSettled').withArgs(Dave.address, undistributedRewards);
+    await expect(tx).to.changeTokenBalances(rewardToken, [await pool.getAddress(), Dave], [-undistributedRewards, undistributedRewards]);
+
+    // Now Caro exits the pool, her un-settled rewards should be tracked as undistributed rewards
+    await expect(pool.connect(Caro).exit())
+      .to.emit(pool, 'WorkerExited').withArgs(Caro.address);
+    tx = pool.connect(Caro).claimRewards();
+    await expect(tx).to.emit(pool, 'RewardsClaimed').withArgs(Caro.address, exactRewardsOfCaro);
+    await expect(tx).to.changeTokenBalances(rewardToken, [await pool.getAddress(), Caro], [-exactRewardsOfCaro, exactRewardsOfCaro]);
+
+    let poolBalance = await rewardToken.balanceOf(await pool.getAddress());
+    // console.log(poolBalance);
+    undistributedRewards = await pool.undistributedRewards();
+    // console.log(undistributedRewards);
+    expectBigNumberEquals(poolBalance, undistributedRewards);
+
+    tx = pool.connect(Dave).settlePool(Dave.address);
+    await expect(tx).to.emit(pool, 'PoolSettled').withArgs(Dave.address, undistributedRewards);
+    await expect(tx).to.changeTokenBalances(rewardToken, [await pool.getAddress(), Dave], [-undistributedRewards, undistributedRewards]);
 
   });
 
