@@ -89,12 +89,44 @@ describe('Working Pool', () => {
     
     // 0.5 hour later, both Alice and Bob submit valid reports
     await time.increaseTo(lastTime + ONE_HOUR_IN_SECS - 1n);
+    lastTime = BigInt(await time.latest());
     await expect(pool.connect(Alice).submitWorkReport(true))
       .to.emit(pool, 'WorkReportSubmitted').withArgs(Alice.address, true, true);
     await expect(pool.connect(Bob).submitWorkReport(true))
       .to.emit(pool, 'WorkReportSubmitted').withArgs(Bob.address, true, true);
     expectBigNumberEquals(await pool.earned(Alice.address), totalRewardsPerHour / 2n + totalRewardsPerHour / 2n);
     expectBigNumberEquals(await pool.earned(Bob.address), totalRewardsPerHour / 2n);
+
+    // Caro joins the pool
+    await expect(pool.connect(Caro).register())
+      .to.emit(pool, 'WorkerRegistered').withArgs(Caro.address);
+    expect(await pool.totalWorkers()).to.equal(3);
+    
+    // 1 hour later (within), Alice, Bob, Call, all submit valid reports. They share the rewards
+    await time.increaseTo(lastTime + ONE_HOUR_IN_SECS - 1n);
+    await expect(pool.connect(Alice).submitWorkReport(true))
+      .to.emit(pool, 'WorkReportSubmitted').withArgs(Alice.address, true, true);
+    await expect(pool.connect(Bob).submitWorkReport(true))
+      .to.emit(pool, 'WorkReportSubmitted').withArgs(Bob.address, true, true);
+    await expect(pool.connect(Caro).submitWorkReport(true))
+      .to.emit(pool, 'WorkReportSubmitted').withArgs(Caro.address, true, true);
+    expectBigNumberEquals(await pool.earned(Alice.address), totalRewardsPerHour / 2n + totalRewardsPerHour / 2n + totalRewardsPerHour / 3n);
+    expectBigNumberEquals(await pool.earned(Bob.address), totalRewardsPerHour / 2n + totalRewardsPerHour / 3n);
+    expectBigNumberEquals(await pool.earned(Caro.address), totalRewardsPerHour / 3n);
+
+    // Alice exits the pool, and still could claim his rewards
+    await expect(pool.connect(Alice).exit())
+      .to.emit(pool, 'WorkerExited').withArgs(Alice.address);
+    expect(await pool.totalWorkers()).to.equal(2);
+    let aliceExactRewards = await pool.earned(Alice.address);
+    // console.log(aliceExactRewards);
+    expectBigNumberEquals(aliceExactRewards, totalRewardsPerHour / 2n + totalRewardsPerHour / 2n + totalRewardsPerHour / 3n);
+    tx = pool.connect(Alice).claimRewards();
+    await expect(tx).to.emit(pool, 'RewardsClaimed').withArgs(Alice.address, aliceExactRewards);
+    await expect(tx).to.changeTokenBalances(rewardToken, [Alice, await pool.getAddress()], [aliceExactRewards, -aliceExactRewards]);
+    expect(await pool.earned(Alice.address)).to.equal(0);
+
+  
 
 
   });
