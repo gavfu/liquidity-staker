@@ -41,7 +41,7 @@ describe('Working Pool', () => {
     expect(await pool.periodFinish()).to.equal(0);
 
     // Can't settle pool before finish
-    await expect(pool.connect(Alice).settlePool(Alice.address)).to.be.revertedWith('not finished yet');
+    await expect(pool.connect(Alice).recycle(Alice.address)).to.be.revertedWith('not finished yet');
 
     // Worker can't exit or submit work report before register
     await expect(pool.connect(Alice).exit()).to.be.revertedWith('unregistered worker');
@@ -156,10 +156,11 @@ describe('Working Pool', () => {
     // Caro's total rewards should remain unchanged, since she does not submit valid report
     expectBigNumberEquals(await pool.earned(Caro.address), exactRewardsOfCaro);
 
-    // Now if somebody settles the pool, he get the undistributed rewards
-    tx = pool.connect(Dave).settlePool(Dave.address);
-    await expect(tx).to.emit(pool, 'PoolSettled').withArgs(Dave.address, undistributedRewards);
-    await expect(tx).to.changeTokenBalances(rewardToken, [await pool.getAddress(), Dave], [-undistributedRewards, undistributedRewards]);
+    // Now Alice could recylce the undistributed rewards
+    await expect(pool.connect(Bob).recycle(Bob.address)).to.be.revertedWith('Ownable: caller is not the owner');
+    tx = pool.connect(Alice).recycle(Alice.address);
+    await expect(tx).to.emit(pool, 'Recycled').withArgs(Alice.address, undistributedRewards);
+    await expect(tx).to.changeTokenBalances(rewardToken, [await pool.getAddress(), Alice], [-undistributedRewards, undistributedRewards]);
 
     // Now Caro exits the pool, her un-settled rewards should be tracked as undistributed rewards
     await expect(pool.connect(Caro).exit())
@@ -174,8 +175,8 @@ describe('Working Pool', () => {
     // console.log(undistributedRewards);
     expectBigNumberEquals(poolBalance, undistributedRewards);
 
-    tx = pool.connect(Dave).settlePool(Dave.address);
-    await expect(tx).to.emit(pool, 'PoolSettled').withArgs(Dave.address, undistributedRewards);
+    tx = pool.connect(Alice).recycle(Dave.address);
+    await expect(tx).to.emit(pool, 'Recycled').withArgs(Dave.address, undistributedRewards);
     await expect(tx).to.changeTokenBalances(rewardToken, [await pool.getAddress(), Dave], [-undistributedRewards, undistributedRewards]);
 
   });

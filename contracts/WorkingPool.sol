@@ -147,11 +147,11 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         emit WorkReportSubmitted(msg.sender, mockValid, inReportWindow);
     }
 
-    function settlePool(address toAddress) external nonReentrant onlyInitialized {
+    function recycle(address toAddress) external nonReentrant onlyInitialized onlyOwner {
         require(toAddress != address(0), "zero address detected");
         require(periodFinish > 0 && block.timestamp > periodFinish, "not finished yet");
-        
-        emit PoolSettled(toAddress, undistributedRewards);
+
+        emit Recycled(toAddress, undistributedRewards);
         if (undistributedRewards > 0) {
             rewardsToken.safeTransfer(toAddress, undistributedRewards);
             undistributedRewards = 0;
@@ -186,5 +186,5 @@ contract WorkingPool is Ownable, ReentrancyGuard {
     event WorkerExited(address indexed worker);
     event RewardsClaimed(address indexed user, uint256 rewards);
     event WorkReportSubmitted(address indexed worker, bool valid, bool inReportWindow);
-    event PoolSettled(address indexed toAddress, uint256 rewards);
+    event Recycled(address indexed toAddress, uint256 rewards);
 }
