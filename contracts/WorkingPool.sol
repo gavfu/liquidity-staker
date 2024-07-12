@@ -22,11 +22,11 @@ contract WorkingPool is Ownable, ReentrancyGuard {
 
     IERC20 public rewardsToken;
     uint256 public totalRewards;
-    uint256 public totalRewardsPerSec;
-    uint256 public undistributedRewards;
+    uint256 internal _totalRewardsPerSecScaled;
+    uint256 internal _undistributedRewardsScaled;
 
-    uint256 public perSecPerWorkerTotalRewardsSettled;
-    mapping(address => uint256) public perSecTotalRewardsSettledForWorkers;
+    uint256 internal _perSecPerWorkerTotalRewardsSettledScaled;
+    mapping(address => uint256) internal _perSecTotalRewardsSettledForWorkersScaled;
 
     uint256 public rewardsDuration;
     uint256 public maxReportSpan;
@@ -67,26 +67,30 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         return workers.length();
     }
 
-    function settleTimeApplicable() public view returns (uint256) {
-        return Math.min(block.timestamp, periodFinish);
-    }
-
-    function perSecPerWorkerTotalRewardsTillNow() public view returns (uint256) {
-        if (totalWorkers() == 0) {
-            return perSecPerWorkerTotalRewardsSettled;
-        }
-        return
-            perSecPerWorkerTotalRewardsSettled.add(
-                settleTimeApplicable().sub(lastSettleTime).mul(totalRewardsPerSec).mul(1e18).div(totalWorkers()).div(1e18)
-            );
-    }
-
-    function perSecTotalRewardsPendingSettleForWorker(address worker) public view returns (uint256) {
-        return perSecPerWorkerTotalRewardsTillNow().sub(perSecTotalRewardsSettledForWorkers[worker]);
+    function undistributedRewards() public view returns (uint256) {
+        return _undistributedRewardsScaled.div(1e18);
     }
 
     function earned(address worker) public view returns (uint256) {
-        return totalRewardsSettledAndUnclaimedForWorkers[worker];
+        return totalRewardsSettledAndUnclaimedForWorkers[worker].div(1e18);
+    }
+
+    function _settleTimeApplicable() internal view returns (uint256) {
+        return Math.min(block.timestamp, periodFinish);
+    }
+
+    function _perSecPerWorkerTotalRewardsTillNowScaled() internal view returns (uint256) {
+        if (totalWorkers() == 0) {
+            return _perSecPerWorkerTotalRewardsSettledScaled;
+        }
+        return
+            _perSecPerWorkerTotalRewardsSettledScaled.add(
+                _settleTimeApplicable().sub(lastSettleTime).mul(_totalRewardsPerSecScaled).div(totalWorkers())
+            );
+    }
+
+    function _perSecTotalRewardsPendingSettleForWorkerScaled(address worker) internal view returns (uint256) {
+        return _perSecPerWorkerTotalRewardsTillNowScaled().sub(_perSecTotalRewardsSettledForWorkersScaled[worker]);
     }
 
     /* ========== MUTATIVE FUNCTIONS ========== */
@@ -98,7 +102,7 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         bool firstWorker = workers.length() == 0;
         if (!started && firstWorker) {
             started = true;
-            totalRewardsPerSec = totalRewards.div(rewardsDuration);
+            _totalRewardsPerSecScaled = totalRewards.mul(1e18).div(rewardsDuration);
             lastSettleTime = block.timestamp;
             periodFinish = block.timestamp.add(rewardsDuration);
         }
@@ -112,7 +116,7 @@ contract WorkingPool is Ownable, ReentrancyGuard {
     function exit() external nonReentrant onlyInitialized {
         require(workers.contains(msg.sender), "unregistered worker");
 
-        undistributedRewards += perSecTotalRewardsPendingSettleForWorker(msg.sender);
+        _undistributedRewardsScaled += _perSecTotalRewardsPendingSettleForWorkerScaled(msg.sender);
         _doSettleRewards(msg.sender, false, false);
 
         workers.remove(msg.sender);
@@ -125,8 +129,8 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         uint256 rewards = totalRewardsSettledAndUnclaimedForWorkers[msg.sender];
         if (rewards > 0) {
             totalRewardsSettledAndUnclaimedForWorkers[msg.sender] = 0;
-            rewardsToken.safeTransfer(msg.sender, rewards);
-            emit RewardsClaimed(msg.sender, rewards);
+            rewardsToken.safeTransfer(msg.sender, rewards.div(1e18));
+            emit RewardsClaimed(msg.sender, rewards.div(1e18));
         }
     }
 
@@ -139,7 +143,7 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         }
 
         if (!inReportWindow) {
-            undistributedRewards += perSecTotalRewardsPendingSettleForWorker(msg.sender);
+            _undistributedRewardsScaled += _perSecTotalRewardsPendingSettleForWorkerScaled(msg.sender);
         }
         _doSettleRewards(msg.sender, false, inReportWindow);
 
@@ -151,10 +155,10 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         require(toAddress != address(0), "zero address detected");
         require(periodFinish > 0 && block.timestamp > periodFinish, "not finished yet");
 
-        emit Recycled(toAddress, undistributedRewards);
-        if (undistributedRewards > 0) {
-            rewardsToken.safeTransfer(toAddress, undistributedRewards);
-            undistributedRewards = 0;
+        emit Recycled(toAddress, _undistributedRewardsScaled.div(1e18));
+        if (_undistributedRewardsScaled > 0) {
+            rewardsToken.safeTransfer(toAddress, _undistributedRewardsScaled.div(1e18));
+            _undistributedRewardsScaled = 0;
         }
     }
     
@@ -168,16 +172,16 @@ contract WorkingPool is Ownable, ReentrancyGuard {
     function _doSettleRewards(address worker, bool newWorker, bool settleNewRewards) internal {
         require(worker != address(0), "zero address detected");
 
-        perSecPerWorkerTotalRewardsSettled = perSecPerWorkerTotalRewardsTillNow();
-        lastSettleTime = settleTimeApplicable();
+        _perSecPerWorkerTotalRewardsSettledScaled = _perSecPerWorkerTotalRewardsTillNowScaled();
+        lastSettleTime = _settleTimeApplicable();
         if (newWorker) {
             totalRewardsSettledAndUnclaimedForWorkers[worker] = 0;
         }
         else if (settleNewRewards) {
             // Pending Settle & Pending Claim ===> Settled & Pending Claim
-            totalRewardsSettledAndUnclaimedForWorkers[worker] += perSecTotalRewardsPendingSettleForWorker(worker);
+            totalRewardsSettledAndUnclaimedForWorkers[worker] += _perSecTotalRewardsPendingSettleForWorkerScaled(worker);
         }
-        perSecTotalRewardsSettledForWorkers[worker] = perSecPerWorkerTotalRewardsSettled;
+        _perSecTotalRewardsSettledForWorkersScaled[worker] = _perSecPerWorkerTotalRewardsSettledScaled;
     }
 
     /* ========== EVENTS ========== */
