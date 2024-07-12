@@ -18,7 +18,7 @@ contract WorkingPool is Ownable, ReentrancyGuard {
     /* ========== STATE VARIABLES ========== */
 
     EnumerableSet.AddressSet internal workers;
-    mapping(address => uint256) public totalRewardsSettledAndUnclaimedForWorkers;
+    mapping(address => uint256) internal _totalRewardsSettledAndUnclaimedForWorkersScaled;
 
     IERC20 public rewardsToken;
     uint256 public totalRewards;
@@ -72,7 +72,7 @@ contract WorkingPool is Ownable, ReentrancyGuard {
     }
 
     function earned(address worker) public view returns (uint256) {
-        return totalRewardsSettledAndUnclaimedForWorkers[worker].div(1e18);
+        return _totalRewardsSettledAndUnclaimedForWorkersScaled[worker].div(1e18);
     }
 
     function _settleTimeApplicable() internal view returns (uint256) {
@@ -126,9 +126,9 @@ contract WorkingPool is Ownable, ReentrancyGuard {
     function claimRewards() external nonReentrant onlyInitialized {
         _doSettleRewards(msg.sender, false, false);
 
-        uint256 rewards = totalRewardsSettledAndUnclaimedForWorkers[msg.sender];
+        uint256 rewards = _totalRewardsSettledAndUnclaimedForWorkersScaled[msg.sender];
         if (rewards > 0) {
-            totalRewardsSettledAndUnclaimedForWorkers[msg.sender] = 0;
+            _totalRewardsSettledAndUnclaimedForWorkersScaled[msg.sender] = 0;
             rewardsToken.safeTransfer(msg.sender, rewards.div(1e18));
             emit RewardsClaimed(msg.sender, rewards.div(1e18));
         }
@@ -175,11 +175,11 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         _perSecPerWorkerTotalRewardsSettledScaled = _perSecPerWorkerTotalRewardsTillNowScaled();
         lastSettleTime = _settleTimeApplicable();
         if (newWorker) {
-            totalRewardsSettledAndUnclaimedForWorkers[worker] = 0;
+            _totalRewardsSettledAndUnclaimedForWorkersScaled[worker] = 0;
         }
         else if (settleNewRewards) {
             // Pending Settle & Pending Claim ===> Settled & Pending Claim
-            totalRewardsSettledAndUnclaimedForWorkers[worker] += _perSecTotalRewardsPendingSettleForWorkerScaled(worker);
+            _totalRewardsSettledAndUnclaimedForWorkersScaled[worker] += _perSecTotalRewardsPendingSettleForWorkerScaled(worker);
         }
         _perSecTotalRewardsSettledForWorkersScaled[worker] = _perSecPerWorkerTotalRewardsSettledScaled;
     }
