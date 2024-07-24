@@ -18,7 +18,7 @@ describe('Working Pool', () => {
     const { rewardToken, Alice, Bob, Caro, Dave } = await loadFixture(deployContractsFixture);
 
     // Distribute 18 $RWD over 180 days. Workers must submit their report at most every 1 hour
-    const totalRewards = ethers.parseUnits('18', await rewardToken.decimals());
+    const totalRewards = ethers.parseUnits('43.2', await rewardToken.decimals());
     const rewardsDuration = ONE_DAY_IN_SECS * 180n;
     const maxReportSpan = ONE_HOUR_IN_SECS;
 
@@ -48,6 +48,8 @@ describe('Working Pool', () => {
     await expect(pool.connect(Alice).submitWorkReport(true)).to.be.revertedWith('unregistered worker');
 
     // Day 1: Alice regisers as a worker
+    // Alice Timeline: 
+    //       Genesis Time (Joined)
     await time.increase(ONE_DAY_IN_SECS);
     await expect(pool.connect(Alice).register())
       .to.emit(pool, 'WorkerRegistered').withArgs(Alice.address);
@@ -56,7 +58,10 @@ describe('Working Pool', () => {
     expect(await pool.totalWorkers()).to.equal(1);
 
     // Total rewards: 0.1 $RWD per day.
-    let totalRewardsPerHour = ethers.parseUnits('0.1', await rewardToken.decimals()) / 24n;
+    // Alice Timeline: 
+    //       Genesis Time (Joined)
+    //       + 1 hour (Submit valid report => 1 hour rewards => claimed) 
+    let totalRewardsPerHour = totalRewards / 180n / 24n;
     await time.increase(ONE_HOUR_IN_SECS - 1n);
     await expect(pool.connect(Alice).submitWorkReport(true))
       .to.emit(pool, 'WorkReportSubmitted').withArgs(Alice.address, true, true);
@@ -65,6 +70,10 @@ describe('Working Pool', () => {
     await expect(tx).to.emit(pool, 'RewardsClaimed').withArgs(Alice.address, anyValue);
 
     // After 1.5 hour, Alice submit another valid report. And earns nothing
+    // Alice Timeline: 
+    //       Genesis Time (Joined)
+    //       + 1 hour (Submit valid report => 1 hour rewards) 
+    //       + 1.5 hour (Submit valid report => ignored due to timeout => 1.5 hours rewards undistributed )
     await time.increase(ONE_HOUR_IN_SECS * 3n / 2n);
     await expect(pool.connect(Alice).submitWorkReport(true))
       .to.emit(pool, 'WorkReportSubmitted').withArgs(Alice.address, true, false);
@@ -72,22 +81,52 @@ describe('Working Pool', () => {
     expectBigNumberEquals(await pool.undistributedRewards(), totalRewardsPerHour * 3n / 2n);
 
     // After 0.5 hour, Alice submit another valid report, should earn 0.5 hour rewards
+    // Alice Timeline: 
+    //       Genesis Time (Joined)
+    //       + 1 hour (Submit valid report => 1 hour rewards) 
+    //       + 1.5 hour (Submit valid report => ignored due to timeout => 1.5 hours rewards undistributed )
+    //       + 0.5 hour (Submit valid report => 0.5 hours rewards)
     let lastTime = BigInt(await time.increase(ONE_HOUR_IN_SECS / 2n - 1n));
     await expect(pool.connect(Alice).submitWorkReport(true))
       .to.emit(pool, 'WorkReportSubmitted').withArgs(Alice.address, true, true);
     expectBigNumberEquals(await pool.earned(Alice.address), totalRewardsPerHour / 2n);
 
     // Bob joins the pool
+    // Bob Timeline: 
+    //       Genesis Time
+    //       + 1 hour
+    //       + 1.5 hour
+    //       + 0.5 hour (Joined)
     await expect(pool.connect(Bob).register())
       .to.emit(pool, 'WorkerRegistered').withArgs(Bob.address);
     expect(await pool.totalWorkers()).to.equal(2);
 
     // 0.5 hour later, Alice submit a false report, which should be ignored
+    // Alice Timeline: 
+    //       Genesis Time (Joined)
+    //       + 1 hour (Submit valid report => 1 hour rewards) 
+    //       + 1.5 hour (Submit valid report => ignored due to timeout => 1.5 hours rewards undistributed )
+    //       + 0.5 hour (Submit valid report => 0.5 hours rewards)
+    //       + 0.5 hour (Submit invalid report => ignored)
     await time.increaseTo(lastTime + ONE_HOUR_IN_SECS / 2n);
     await expect(pool.connect(Alice).submitWorkReport(false))
       .to.emit(pool, 'WorkReportSubmitted').withArgs(Alice.address, false, true);
     
     // 0.5 hour later, both Alice and Bob submit valid reports
+    // Alice Timeline: 
+    //       Genesis Time (Joined)
+    //       + 1 hour (Submit valid report => 1 hour rewards) 
+    //       + 1.5 hour (Submit valid report => ignored due to timeout => 1.5 hours rewards undistributed )
+    //       + 0.5 hour (Submit valid report => 0.5 hours rewards)
+    //       + 0.5 hour (Submit invalid report => ignored)
+    //       + 0.5 hour (Submit valid report => another 1 hours rewards / 2)
+    // Bob Timeline: 
+    //       Genesis Time
+    //       + 1 hour
+    //       + 1.5 hour
+    //       + 0.5 hour (Joined)
+    //       + 0.5 hour
+    //       + 0.5 hour (Submit valid report => 1 hours rewards / 2)
     await time.increaseTo(lastTime + ONE_HOUR_IN_SECS - 1n);
     lastTime = BigInt(await time.latest());
     await expect(pool.connect(Alice).submitWorkReport(true))
@@ -103,6 +142,30 @@ describe('Working Pool', () => {
     expect(await pool.totalWorkers()).to.equal(3);
     
     // 1 hour later (within), Alice, Bob, Call, all submit valid reports. They share the rewards
+    // Alice Timeline: 
+    //       Genesis Time (Joined)
+    //       + 1 hour (Submit valid report => 1 hour rewards) 
+    //       + 1.5 hour (Submit valid report => ignored due to timeout => 1.5 hours rewards undistributed )
+    //       + 0.5 hour (Submit valid report => 0.5 hours rewards)
+    //       + 0.5 hour (Submit invalid report => ignored)
+    //       + 0.5 hour (Submit valid report => another 1 hours rewards / 2)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 3)
+    // Bob Timeline: 
+    //       Genesis Time
+    //       + 1 hour
+    //       + 1.5 hour
+    //       + 0.5 hour (Joined)
+    //       + 0.5 hour
+    //       + 0.5 hour (Submit valid report => 1 hours rewards / 2)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 3)
+    // Caro Timeline:
+    //       Genesis Time
+    //       + 1 hour
+    //       + 1.5 hour
+    //       + 0.5 hour 
+    //       + 0.5 hour
+    //       + 0.5 hour (Joined)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 3)
     await time.increaseTo(lastTime + ONE_HOUR_IN_SECS - 1n);
     await expect(pool.connect(Alice).submitWorkReport(true))
       .to.emit(pool, 'WorkReportSubmitted').withArgs(Alice.address, true, true);
@@ -127,6 +190,32 @@ describe('Working Pool', () => {
     expect(await pool.earned(Alice.address)).to.equal(0);
 
     // 1 hour later (within), Bob and Caro submit valid reports, and share the rewards
+    // Alice Timeline: 
+    //       Genesis Time (Joined)
+    //       + 1 hour (Submit valid report => 1 hour rewards) 
+    //       + 1.5 hour (Submit valid report => ignored due to timeout => 1.5 hours rewards undistributed )
+    //       + 0.5 hour (Submit valid report => 0.5 hours rewards)
+    //       + 0.5 hour (Submit invalid report => ignored)
+    //       + 0.5 hour (Submit valid report => another 1 hours rewards / 2)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 3)  && (Exit)
+    // Bob Timeline: 
+    //       Genesis Time
+    //       + 1 hour
+    //       + 1.5 hour
+    //       + 0.5 hour (Joined)
+    //       + 0.5 hour
+    //       + 0.5 hour (Submit valid report => 1 hours rewards / 2)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 3)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 2)
+    // Caro Timeline:
+    //       Genesis Time
+    //       + 1 hour
+    //       + 1.5 hour
+    //       + 0.5 hour 
+    //       + 0.5 hour
+    //       + 0.5 hour (Joined)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 3)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 2)
     expectBigNumberEquals(await pool.earned(Bob.address), totalRewardsPerHour / 2n + totalRewardsPerHour / 3n);
     expectBigNumberEquals(await pool.earned(Caro.address), totalRewardsPerHour / 3n);
     await time.increaseTo(lastTime + ONE_HOUR_IN_SECS * 2n - 1n);
@@ -139,6 +228,27 @@ describe('Working Pool', () => {
     expectBigNumberEquals(await pool.earned(Caro.address), totalRewardsPerHour / 3n + totalRewardsPerHour / 2n);
 
     // 1 hour later (within), Bob leaves the pool, and Caro submits a valid report.
+    // Bob Timeline: 
+    //       Genesis Time
+    //       + 1 hour
+    //       + 1.5 hour
+    //       + 0.5 hour (Joined)
+    //       + 0.5 hour
+    //       + 0.5 hour (Submit valid report => 1 hours rewards / 2)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 3)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 2)
+    //       + 1 hour (Exit => 1 hours rewards / 2 to undistributed)
+    // Caro Timeline:
+    //       Genesis Time
+    //       + 1 hour
+    //       + 1.5 hour
+    //       + 0.5 hour 
+    //       + 0.5 hour
+    //       + 0.5 hour (Joined)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 3)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 2)
+    //       + 1 hour (Submit valid report => 1 hours rewards / 2)
+    // console.log("######################");
     let undistributedRewards = await pool.undistributedRewards();
     await time.increaseTo(lastTime + ONE_HOUR_IN_SECS * 3n - 1n);
     await expect(pool.connect(Bob).exit())

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
-// import "hardhat/console.sol";
+import "hardhat/console.sol";
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
@@ -83,14 +83,19 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         if (totalWorkers() == 0) {
             return _perSecPerWorkerTotalRewardsSettledScaled;
         }
-        return
-            _perSecPerWorkerTotalRewardsSettledScaled.add(
-                _settleTimeApplicable().sub(lastSettleTime).mul(_totalRewardsPerSecScaled).div(totalWorkers())
-            );
+        
+        uint256 oldRewards = _perSecPerWorkerTotalRewardsSettledScaled;
+        uint256 rewards = _perSecPerWorkerTotalRewardsSettledScaled.add(
+            _settleTimeApplicable().sub(lastSettleTime).mul(_totalRewardsPerSecScaled).div(totalWorkers())
+        );
+        console.log("_perSecPerWorkerTotalRewardsTillNowScaled(), total workers: %s, old rewards: %s, new rewards: %s", totalWorkers(), oldRewards, rewards);
+        return rewards;
     }
 
     function _perSecTotalRewardsPendingSettleForWorkerScaled(address worker) internal view returns (uint256) {
-        return _perSecPerWorkerTotalRewardsTillNowScaled().sub(_perSecTotalRewardsSettledForWorkersScaled[worker]);
+        uint256 lastRewards = _perSecPerWorkerTotalRewardsTillNowScaled();
+        console.log("_perSecTotalRewardsPendingSettleForWorkerScaled(), last: %s, sub: %s, new : %s", lastRewards, _perSecTotalRewardsSettledForWorkersScaled[worker], lastRewards.sub(_perSecTotalRewardsSettledForWorkersScaled[worker]));
+        return lastRewards.sub(_perSecTotalRewardsSettledForWorkersScaled[worker]);
     }
 
     /* ========== MUTATIVE FUNCTIONS ========== */
@@ -171,6 +176,7 @@ contract WorkingPool is Ownable, ReentrancyGuard {
 
     function _doSettleRewards(address worker, bool newWorker, bool settleNewRewards) internal {
         require(worker != address(0), "zero address detected");
+        console.log("_doSettleRewards() start");
 
         _perSecPerWorkerTotalRewardsSettledScaled = _perSecPerWorkerTotalRewardsTillNowScaled();
         lastSettleTime = _settleTimeApplicable();
@@ -180,8 +186,10 @@ contract WorkingPool is Ownable, ReentrancyGuard {
         else if (settleNewRewards) {
             // Pending Settle & Pending Claim ===> Settled & Pending Claim
             _totalRewardsSettledAndUnclaimedForWorkersScaled[worker] += _perSecTotalRewardsPendingSettleForWorkerScaled(worker);
+            console.log("_doSettleRewards(), update _totalRewardsSettledAndUnclaimedForWorkersScaled[x] to: ", _totalRewardsSettledAndUnclaimedForWorkersScaled[worker]);
         }
         _perSecTotalRewardsSettledForWorkersScaled[worker] = _perSecPerWorkerTotalRewardsSettledScaled;
+        console.log("_doSettleRewards() end");
     }
 
     /* ========== EVENTS ========== */
